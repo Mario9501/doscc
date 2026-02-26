@@ -14,6 +14,7 @@ SDKS_DIR = DOSCC_DIR / "sdks"
 
 HP95LX_REPO = "https://github.com/95lx/hp95dev.git"
 PAL_REPO = "https://github.com/JoakimCh/palmtop-application-library.git"
+MSC50_REPO = "https://github.com/Mario9501/msc50.git"
 MSC50_URL = (
     "https://archive.org/download/"
     "microsoft-c-compiler-5.0-1987-5.25-360k.-7z/"
@@ -130,6 +131,46 @@ def validate_pal(path: Path) -> bool:
     for f in required:
         if not (path / f).exists():
             return False
+    return True
+
+
+# ======================================================================
+# MS C 5.0 toolchain - clone from GitHub
+# ======================================================================
+
+def clone_msc50(dest: Path) -> bool:
+    """Clone the pre-assembled MS C 5.0 + MASM 5.1 toolchain from GitHub.
+
+    Returns True on success, False on failure.
+    """
+    missing = require_tools("git")
+    if missing:
+        print(f"  error: required tool not found: {', '.join(missing)}")
+        return False
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if dest.exists():
+        print(f"  removing existing directory: {dest}")
+        shutil.rmtree(dest)
+
+    print(f"  cloning {MSC50_REPO}...")
+    result = subprocess.run(
+        ["git", "clone", MSC50_REPO, str(dest)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"  error: git clone failed")
+        if result.stderr:
+            for line in result.stderr.strip().splitlines()[:5]:
+                print(f"    {line}")
+        return False
+
+    if not validate_msc50(dest):
+        print("  error: cloned toolchain is missing expected files")
+        return False
+
+    print(f"  verified: BIN/CL.EXE, INCLUDE/STDIO.H, LIB/SLIBC.LIB")
     return True
 
 

@@ -92,7 +92,8 @@ static int detect_pga(void)
 int vid_init(void)
 {
     union REGS regs;
-    int equip, i, val, changed;
+    int equip, val, changed;
+    unsigned int i;
 
     /* --- Step 1: VGA/PS2 identification (INT 10h AH=1Ah) ---
      * Supported by VGA, MCGA, and some late EGA BIOSes.

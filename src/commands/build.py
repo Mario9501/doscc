@@ -63,6 +63,7 @@ def run(args: list[str]) -> int:
 
     try:
         output = target.build(sources, project_root)
+        ws.cleanup()
         elapsed = time.time() - start
         print(f"built {output.name} ({elapsed:.1f}s)")
         return 0

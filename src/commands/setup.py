@@ -11,7 +11,7 @@ from sdk_setup import (
     TOOLCHAINS_DIR, SDKS_DIR,
     clone_hp95lx_sdk, validate_hp95lx_sdk,
     clone_pal, validate_pal,
-    download_msc50, assemble_from_local, validate_msc50,
+    clone_msc50, download_msc50, assemble_from_local, validate_msc50,
 )
 
 
@@ -85,6 +85,7 @@ def _setup_toolchain(cfg: GlobalConfig) -> None:
             print("  no toolchain configured.")
 
     choice = _choice("Choice", [
+        "Clone from GitHub (requires git)",
         "Download from archive.org (requires curl + unzip)",
         "Assemble from disk files or images (requires mtools for .img)",
         "Point to existing assembled toolchain",
@@ -93,13 +94,21 @@ def _setup_toolchain(cfg: GlobalConfig) -> None:
 
     if choice == 1:
         dest = TOOLCHAINS_DIR / "msc50"
-        if download_msc50(dest):
+        if clone_msc50(dest):
             cfg.toolchains["msc50"] = ToolchainConfig(name="msc50", path=dest)
             print(f"  toolchain installed at {dest}")
         else:
             print("  toolchain setup failed")
 
     elif choice == 2:
+        dest = TOOLCHAINS_DIR / "msc50"
+        if download_msc50(dest):
+            cfg.toolchains["msc50"] = ToolchainConfig(name="msc50", path=dest)
+            print(f"  toolchain installed at {dest}")
+        else:
+            print("  toolchain setup failed")
+
+    elif choice == 3:
         source = _prompt("  path to disk files or images")
         if source:
             dest = TOOLCHAINS_DIR / "msc50"
@@ -109,7 +118,7 @@ def _setup_toolchain(cfg: GlobalConfig) -> None:
             else:
                 print("  toolchain setup failed")
 
-    elif choice == 3:
+    elif choice == 4:
         path = _prompt("  path to MSC directory")
         if path:
             p = Path(path)
@@ -243,7 +252,7 @@ def _install_libs() -> None:
 
         # Copy .H and .C source files (don't overwrite .LIB if already built)
         for item in lib_src.iterdir():
-            if item.suffix.upper() in (".H", ".C"):
+            if item.suffix.upper() in (".H", ".C", ".ASM"):
                 shutil.copy2(item, dest / item.name)
 
         installed += 1

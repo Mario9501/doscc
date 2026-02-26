@@ -45,7 +45,8 @@ def _list_libs() -> int:
         found = True
         name = lib_dir.name
 
-        has_source = any(lib_dir.glob("*.C")) or any(lib_dir.glob("*.c"))
+        has_source = (any(lib_dir.glob("*.C")) or any(lib_dir.glob("*.c"))
+                      or any(lib_dir.glob("*.ASM")) or any(lib_dir.glob("*.asm")))
         has_lib = any(lib_dir.glob("*.LIB")) or any(lib_dir.glob("*.lib"))
 
         if has_lib:
@@ -74,12 +75,16 @@ def _build_lib(name: str, verbose: bool) -> int:
         print(f"error: library '{name}' not found in {LIBS_DIR}", file=sys.stderr)
         return 1
 
-    # Find source files
-    sources = sorted(lib_dir.glob("*.C"))
+    # Find source files (.C and .ASM)
+    c_sources = sorted(lib_dir.glob("*.C"))
+    if not c_sources:
+        c_sources = sorted(lib_dir.glob("*.c"))
+    asm_sources = sorted(lib_dir.glob("*.ASM"))
+    if not asm_sources:
+        asm_sources = sorted(lib_dir.glob("*.asm"))
+    sources = c_sources + asm_sources
     if not sources:
-        sources = sorted(lib_dir.glob("*.c"))
-    if not sources:
-        print(f"error: no .C source files in {lib_dir}", file=sys.stderr)
+        print(f"error: no .C or .ASM source files in {lib_dir}", file=sys.stderr)
         return 1
 
     # Load global config for toolchain
@@ -114,7 +119,7 @@ def _build_lib(name: str, verbose: bool) -> int:
                 if not dest.exists():
                     os.symlink(h, dest)
 
-        # Copy .C sources into SRC/
+        # Copy source files into SRC/
         src_dir = build_dir / "SRC"
         src_dir.mkdir()
         for src in sources:
@@ -130,11 +135,17 @@ def _build_lib(name: str, verbose: bool) -> int:
         obj_files = []
         for src in sources:
             dos_name = src.name.upper()
-            obj_name = dos_name.rsplit(".", 1)[0] + ".OBJ"
+            base, ext = dos_name.rsplit(".", 1)
+            obj_name = base + ".OBJ"
 
-            args = f"/c /AS /Zl /Gs /IINCLUDE /FoSRC\\ SRC\\{dos_name}"
             try:
-                runner.run_checked("BIN\\CL.EXE", args, tool_name="CL.EXE")
+                if ext == "ASM":
+                    # MASM: /ML = case-sensitive (C linkage)
+                    args = f"/ML /IINCLUDE SRC\\{dos_name},SRC\\{obj_name},NUL,NUL;"
+                    runner.run_checked("BIN\\MASM.EXE", args, tool_name="MASM.EXE")
+                else:
+                    args = f"/c /AS /Zl /Gs /IINCLUDE /FoSRC\\ SRC\\{dos_name}"
+                    runner.run_checked("BIN\\CL.EXE", args, tool_name="CL.EXE")
             except BuildError as e:
                 print(f"\nerror: compiling {dos_name}: {e}", file=sys.stderr)
                 if e.output:
@@ -180,7 +191,8 @@ def _build_all(verbose: bool) -> int:
     for lib_dir in sorted(LIBS_DIR.iterdir()):
         if not lib_dir.is_dir():
             continue
-        has_source = any(lib_dir.glob("*.C")) or any(lib_dir.glob("*.c"))
+        has_source = (any(lib_dir.glob("*.C")) or any(lib_dir.glob("*.c"))
+                      or any(lib_dir.glob("*.ASM")) or any(lib_dir.glob("*.asm")))
         if has_source:
             result = _build_lib(lib_dir.name, verbose)
             if result != 0:

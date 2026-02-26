@@ -42,11 +42,21 @@ class Target(ABC):
         """Compile all source files. Returns list of DOS .OBJ paths."""
         obj_files = []
         for src in sources:
-            flags = self._compile_flags()
-            args = f"{flags} /FoSRC\\ {src.dos_path}"
-            self.runner.run_checked("BIN\\CL.EXE", args, tool_name="CL.EXE")
+            if src.source_type == "asm":
+                self._assemble(src)
+            else:
+                flags = self._compile_flags()
+                args = f"{flags} /FoSRC\\ {src.dos_path}"
+                self.runner.run_checked("BIN\\CL.EXE", args, tool_name="CL.EXE")
             obj_files.append(src.obj_path)
         return obj_files
+
+    def _assemble(self, src: SourceFile) -> None:
+        """Assemble a .ASM file with MASM. Produces .OBJ in SRC\\."""
+        # /ML = case-sensitive names (required for C linkage)
+        # Positional format: MASM source,object,listing,cross-ref;
+        args = f"/ML /IINCLUDE {src.dos_path},{src.obj_path},NUL,NUL;"
+        self.runner.run_checked("BIN\\MASM.EXE", args, tool_name="MASM.EXE")
 
     @abstractmethod
     def _compile_flags(self) -> str:

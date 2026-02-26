@@ -20,6 +20,7 @@ class SourceFile:
     workspace_path: Path  # copy in .doscc/build/SRC/
     dos_path: str         # DOS path relative to C:\ (e.g. SRC\FOO.C)
     obj_path: str         # DOS path for .OBJ (e.g. SRC\FOO.OBJ)
+    source_type: str = "c"  # "c" or "asm"
 
 
 class Workspace:
@@ -50,6 +51,18 @@ class Workspace:
         sources = self._copy_sources()
 
         return sources
+
+    def cleanup(self) -> None:
+        """Remove the build directory after a successful build."""
+        if self.build_dir.exists():
+            shutil.rmtree(self.build_dir)
+            # Remove .doscc/ too if nothing meaningful remains
+            doscc_dir = self.build_dir.parent
+            if doscc_dir.exists():
+                remaining = [f for f in doscc_dir.iterdir()
+                             if f.name != ".DS_Store"]
+                if not remaining:
+                    shutil.rmtree(doscc_dir)
 
     def _link_bin(self) -> None:
         """Symlink toolchain BIN/ directory."""
@@ -149,12 +162,15 @@ class Workspace:
                 ws_path = src_dir / dos_name
                 shutil.copy2(host_path, ws_path)
 
-                obj_name = dos_name.rsplit(".", 1)[0] + ".OBJ"
+                base, ext = dos_name.rsplit(".", 1)
+                obj_name = base + ".OBJ"
+                src_type = "asm" if ext == "ASM" else "c"
                 sources.append(SourceFile(
                     host_path=host_path,
                     workspace_path=ws_path,
                     dos_path=f"SRC\\{dos_name}",
                     obj_path=f"SRC\\{obj_name}",
+                    source_type=src_type,
                 ))
 
         return sources
