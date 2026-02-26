@@ -158,26 +158,40 @@ class Target(ABC):
 class DosExeTarget(Target):
     """Standard DOS .EXE using MS C runtime."""
 
-    # Default C runtime library per memory model
-    MODEL_LIBS = {
-        "tiny": "SLIBC.LIB",
-        "small": "SLIBC.LIB",
-        "medium": "MLIBC.LIB",
-        "compact": "CLIBC.LIB",
-        "large": "LLIBC.LIB",
-    }
-
-    # Floating-point emulation library per memory model (provides __fltused, FI*RQQ symbols)
-    MODEL_FP_LIBS = {
-        "tiny": "SLIBFP.LIB",
-        "small": "SLIBFP.LIB",
-        "medium": "MLIBFP.LIB",
-        "compact": "CLIBFP.LIB",
-        "large": "LLIBFP.LIB",
+    # Memory model prefix for library names (tiny uses small-model libs)
+    MODEL_PREFIX = {
+        "tiny": "S",
+        "small": "S",
+        "medium": "M",
+        "compact": "C",
+        "large": "L",
     }
 
     def _compile_flags(self) -> str:
         return self._common_compile_flags()
+
+    def _detect_fp_suffix(self) -> str:
+        """Detect FP library suffix from compiler flags.
+
+        MS C 5.0 FP options map to combined libraries:
+          /FPi (default), /FPc  -> xLIBCE.LIB  (inline/calls + emulator)
+          /FPi87, /FPc87        -> xLIBC7.LIB  (inline/calls + 8087)
+          /FPa                  -> xLIBCA.LIB  (alternate math)
+        """
+        for flag in self.cfg.compiler.extra_flags:
+            upper = flag.upper()
+            if upper == "/FPA":
+                return "CA"
+            if upper in ("/FPI87", "/FPC87"):
+                return "C7"
+        # Default: emulator (/FPi or /FPc or no FP flag)
+        return "CE"
+
+    def _combined_lib(self) -> str:
+        """Return the combined CRT+FP library name for the current model and FP mode."""
+        prefix = self.MODEL_PREFIX.get(self.cfg.compiler.model, "S")
+        suffix = self._detect_fp_suffix()
+        return f"{prefix}LIB{suffix}.LIB"
 
     def _link(self, obj_files: list[str], sources: list[SourceFile]) -> str:
         objs = "+".join(obj_files)
@@ -186,22 +200,13 @@ class DosExeTarget(Target):
         map_name = self._output_name(".MAP") if self.cfg.linker.map_file else "NUL"
         map_path = f"SRC\\{map_name}" if self.cfg.linker.map_file else "NUL"
 
-        # Libraries - normalize names, include C runtime + helper lib
+        # Libraries - normalize user libs, add combined CRT+FP lib + helper lib
         libs = self._normalize_libs(self.cfg.linker.libraries)
-        crt_lib = self.MODEL_LIBS.get(self.cfg.compiler.model, "SLIBC.LIB")
-        if crt_lib not in libs:
-            libs.append(crt_lib)
+        combined = self._combined_lib()
+        if combined not in libs:
+            libs.append(combined)
         if "LIBH.LIB" not in libs:
             libs.append("LIBH.LIB")
-        # Detect user-supplied FP library (alternate math or 8087)
-        has_alt_fp = any(l.upper().endswith("FA.LIB") or l.upper() == "87.LIB"
-                         for l in libs)
-        if not has_alt_fp:
-            fp_lib = self.MODEL_FP_LIBS.get(self.cfg.compiler.model, "SLIBFP.LIB")
-            if fp_lib not in libs:
-                libs.append(fp_lib)
-            if "EM.LIB" not in libs:
-                libs.append("EM.LIB")
         libs_str = "+".join(libs)
 
         flags = self._link_flags()
