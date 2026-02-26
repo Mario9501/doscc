@@ -167,6 +167,15 @@ class DosExeTarget(Target):
         "large": "LLIBC.LIB",
     }
 
+    # Floating-point emulation library per memory model (provides __fltused, FI*RQQ symbols)
+    MODEL_FP_LIBS = {
+        "tiny": "SLIBFP.LIB",
+        "small": "SLIBFP.LIB",
+        "medium": "MLIBFP.LIB",
+        "compact": "CLIBFP.LIB",
+        "large": "LLIBFP.LIB",
+    }
+
     def _compile_flags(self) -> str:
         return self._common_compile_flags()
 
@@ -184,6 +193,11 @@ class DosExeTarget(Target):
             libs.append(crt_lib)
         if "LIBH.LIB" not in libs:
             libs.append("LIBH.LIB")
+        fp_lib = self.MODEL_FP_LIBS.get(self.cfg.compiler.model, "SLIBFP.LIB")
+        if fp_lib not in libs:
+            libs.append(fp_lib)
+        if "EM.LIB" not in libs:
+            libs.append("EM.LIB")
         libs_str = "+".join(libs)
 
         flags = self._link_flags()

@@ -21,6 +21,7 @@ usage: doscc lib <subcommand>
 subcommands:
   list              List installed libraries
   build [name]      Build a library (or all libraries)
+  new <name>        Create a new library from template
 
 options:
   -v, --verbose     Show detailed build output
@@ -83,9 +84,30 @@ def _build_lib(name: str, verbose: bool) -> int:
     if not asm_sources:
         asm_sources = sorted(lib_dir.glob("*.asm"))
     sources = c_sources + asm_sources
+
+    # Header-only libraries: have .H files but no compilable sources
     if not sources:
+        has_headers = any(lib_dir.glob("*.H")) or any(lib_dir.glob("*.h"))
+        if has_headers:
+            print(f"{name.upper()}: header-only, nothing to build")
+            return 0
         print(f"error: no .C or .ASM source files in {lib_dir}", file=sys.stderr)
         return 1
+
+    # Check DEPS file — all dependencies must be built first
+    deps_file = lib_dir / "DEPS"
+    if deps_file.exists():
+        for line in deps_file.read_text().splitlines():
+            dep = line.strip()
+            if not dep or dep.startswith("#"):
+                continue
+            dep_dir = LIBS_DIR / dep.lower()
+            dep_lib = dep.upper() + ".LIB"
+            if not dep_dir.exists() or not (dep_dir / dep_lib).exists():
+                print(f"error: {name.upper()} depends on {dep.upper()} "
+                      f"which is not built yet", file=sys.stderr)
+                print(f"build it first: doscc lib build {dep}", file=sys.stderr)
+                return 1
 
     # Load global config for toolchain
     global_cfg = load_global_config()
@@ -118,6 +140,16 @@ def _build_lib(name: str, verbose: bool) -> int:
                 dest = inc_dir / h.name.upper()
                 if not dest.exists():
                     os.symlink(h, dest)
+
+        # Cross-library headers: symlink .H from all other installed libs
+        if LIBS_DIR.exists():
+            for other_lib in LIBS_DIR.iterdir():
+                if other_lib.is_dir() and other_lib != lib_dir:
+                    for h in other_lib.iterdir():
+                        if h.suffix.upper() == ".H":
+                            dest = inc_dir / h.name.upper()
+                            if not dest.exists():
+                                os.symlink(h, dest)
 
         # Copy source files into SRC/
         src_dir = build_dir / "SRC"
@@ -179,22 +211,74 @@ def _build_lib(name: str, verbose: bool) -> int:
     return 0
 
 
+def _topo_sort_libs():
+    """Topologically sort library directories by DEPS files."""
+    if not LIBS_DIR.exists():
+        return []
+
+    # Collect all library names
+    libs = {}
+    for lib_dir in sorted(LIBS_DIR.iterdir()):
+        if not lib_dir.is_dir():
+            continue
+        name = lib_dir.name.lower()
+        deps = []
+        deps_file = lib_dir / "DEPS"
+        if deps_file.exists():
+            for line in deps_file.read_text().splitlines():
+                dep = line.strip().lower()
+                if dep and not dep.startswith("#"):
+                    deps.append(dep)
+        libs[name] = deps
+
+    # Kahn's algorithm for topological sort
+    in_degree = {name: 0 for name in libs}
+    for name, deps in libs.items():
+        for dep in deps:
+            if dep in in_degree:
+                in_degree[name] += 1
+
+    queue = sorted([n for n, d in in_degree.items() if d == 0])
+    order = []
+    while queue:
+        node = queue.pop(0)
+        order.append(node)
+        for name, deps in libs.items():
+            if node in deps:
+                in_degree[name] -= 1
+                if in_degree[name] == 0:
+                    queue.append(name)
+                    queue.sort()
+
+    # Append any remaining (circular deps) at the end
+    for name in sorted(libs):
+        if name not in order:
+            order.append(name)
+
+    return order
+
+
 def _build_all(verbose: bool) -> int:
-    """Build all libraries that have source files."""
+    """Build all libraries in dependency order."""
     if not LIBS_DIR.exists():
         print("no libraries installed")
         print("run 'doscc setup' to install library sources")
         return 0
 
+    order = _topo_sort_libs()
+    if not order:
+        print("no libraries found")
+        return 0
+
     built = 0
     rc = 0
-    for lib_dir in sorted(LIBS_DIR.iterdir()):
-        if not lib_dir.is_dir():
-            continue
+    for name in order:
+        lib_dir = LIBS_DIR / name
         has_source = (any(lib_dir.glob("*.C")) or any(lib_dir.glob("*.c"))
                       or any(lib_dir.glob("*.ASM")) or any(lib_dir.glob("*.asm")))
-        if has_source:
-            result = _build_lib(lib_dir.name, verbose)
+        has_headers = any(lib_dir.glob("*.H")) or any(lib_dir.glob("*.h"))
+        if has_source or has_headers:
+            result = _build_lib(name, verbose)
             if result != 0:
                 rc = result
             else:
@@ -204,6 +288,108 @@ def _build_all(verbose: bool) -> int:
         print("no libraries with source files found")
 
     return rc
+
+
+# ======================================================================
+# New library scaffolding
+# ======================================================================
+
+_TEMPLATE_H = """\
+/* ======================================================================
+ * {NAME}.H - {description}
+ *
+ * MS C 5.0 / small model
+ * ====================================================================== */
+
+#ifndef {NAME}_H
+#define {NAME}_H
+
+/* ======================================================================
+ * Constants
+ * ====================================================================== */
+
+
+/* ======================================================================
+ * Functions
+ * ====================================================================== */
+
+/* Initialize the {lower} subsystem. */
+int   {prefix}_init(void);
+
+/* Shut down the {lower} subsystem and release resources. */
+void  {prefix}_cleanup(void);
+
+#endif /* {NAME}_H */
+"""
+
+_TEMPLATE_C = """\
+/* ======================================================================
+ * {NAME}.C - {description}
+ *
+ * MS C 5.0 / small model
+ * ====================================================================== */
+
+#include <dos.h>
+#include "{lower}.h"
+
+/* ======================================================================
+ * Internal state
+ * ====================================================================== */
+
+static int {prefix}_initialized = 0;
+
+/* ======================================================================
+ * Public API
+ * ====================================================================== */
+
+int {prefix}_init(void)
+{{
+    if ({prefix}_initialized)
+        return 0;
+    {prefix}_initialized = 1;
+    return 0;
+}}
+
+void {prefix}_cleanup(void)
+{{
+    if (!{prefix}_initialized)
+        return;
+    {prefix}_initialized = 0;
+}}
+"""
+
+
+def _new_lib(name: str) -> int:
+    """Create a new library from template."""
+    bundled = Path(__file__).parent.parent / "libs"
+    lib_dir = bundled / name.lower()
+
+    if lib_dir.exists():
+        print(f"error: library '{name}' already exists at {lib_dir}",
+              file=sys.stderr)
+        return 1
+
+    upper = name.upper()
+    lower = name.lower()
+    prefix = lower[:4] if len(lower) > 4 else lower
+    desc = f"{upper} library"
+
+    lib_dir.mkdir(parents=True)
+
+    h_path = lib_dir / f"{upper}.H"
+    c_path = lib_dir / f"{upper}.C"
+
+    h_path.write_text(_TEMPLATE_H.format(
+        NAME=upper, lower=lower, prefix=prefix, description=desc))
+    c_path.write_text(_TEMPLATE_C.format(
+        NAME=upper, lower=lower, prefix=prefix, description=desc))
+
+    print(f"created library '{upper}' in {lib_dir}")
+    print(f"  {h_path.name}")
+    print(f"  {c_path.name}")
+    print(f"\nprefix: {prefix}_")
+    print("edit the files, then run 'doscc setup' to install")
+    return 0
 
 
 # ======================================================================
@@ -228,6 +414,12 @@ def run(args: list[str]) -> int:
             return _build_lib(cmd_args[1], verbose)
         else:
             return _build_all(verbose)
+
+    elif subcmd == "new":
+        if len(cmd_args) < 2:
+            print("error: usage: doscc lib new <name>", file=sys.stderr)
+            return 1
+        return _new_lib(cmd_args[1])
 
     else:
         print(f"error: unknown subcommand '{subcmd}'", file=sys.stderr)
