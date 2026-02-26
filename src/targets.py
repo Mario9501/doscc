@@ -193,11 +193,15 @@ class DosExeTarget(Target):
             libs.append(crt_lib)
         if "LIBH.LIB" not in libs:
             libs.append("LIBH.LIB")
-        fp_lib = self.MODEL_FP_LIBS.get(self.cfg.compiler.model, "SLIBFP.LIB")
-        if fp_lib not in libs:
-            libs.append(fp_lib)
-        if "EM.LIB" not in libs:
-            libs.append("EM.LIB")
+        # Detect user-supplied FP library (alternate math or 8087)
+        has_alt_fp = any(l.upper().endswith("FA.LIB") or l.upper() == "87.LIB"
+                         for l in libs)
+        if not has_alt_fp:
+            fp_lib = self.MODEL_FP_LIBS.get(self.cfg.compiler.model, "SLIBFP.LIB")
+            if fp_lib not in libs:
+                libs.append(fp_lib)
+            if "EM.LIB" not in libs:
+                libs.append("EM.LIB")
         libs_str = "+".join(libs)
 
         flags = self._link_flags()
